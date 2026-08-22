@@ -8,7 +8,7 @@ The original trained model is `models/conjuctiva.keras` and is tracked with Git 
 git lfs pull
 ```
 
-The browser uses TensorFlow.js TFLite support and expects the converted model at `public/models/conjuctiva.tflite`. Install TensorFlow in a Python environment, then run:
+The browser uses TensorFlow.js TFLite support. Because Vercel deployments receive Git LFS pointers for large files, the browser model defaults to the GitHub LFS media URL. You can override it with `NEXT_PUBLIC_MODEL_URL` when deploying from another asset host. Install TensorFlow in a Python environment, then run:
 
 ```powershell
 pip install tensorflow
