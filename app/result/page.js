@@ -1,20 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import MainLayout from "@/components/MainLayout";
 import Card from "@/components/Card";
 import { getLatestPhoto } from "@/lib/db";
-import { FiCheckCircle, FiAlertTriangle, FiAlertCircle, FiInfo } from "react-icons/fi";
-
-const MOCK_RESULT = {
-  hemoglobin: 10.4,
-  unit: "g/dL",
-  confidence: "moderate", // "high", "moderate", "low"
-  status: "possible_low_hb", // "normal", "possible_low_hb"
-  message: "This screening estimate is below the reference range and should be confirmed with a blood test."
-};
+import { predictImage } from "@/lib/model";
+import { FiAlertCircle, FiCheckCircle, FiInfo } from "react-icons/fi";
 
 export default function ResultPage() {
   const router = useRouter();
@@ -22,34 +14,34 @@ export default function ResultPage() {
   const [photoUrl, setPhotoUrl] = useState("");
   const [step, setStep] = useState(0); // 0: Photo received, 1: Image processing, 2: Estimating haemoglobin, 3: Preparing result, 4: Done
   const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
-    getLatestPhoto().then((record) => {
-      if (!active) return;
-      if (!record || !record.blob) {
-        router.push("/screen");
-        return;
-      }
-      setPhoto(record);
-      setPhotoUrl(URL.createObjectURL(record.blob));
-      
-      // Start fake analysis sequence
-      const timers = [
-        setTimeout(() => setStep(1), 1000),
-        setTimeout(() => setStep(2), 2500),
-        setTimeout(() => setStep(3), 4000),
-        setTimeout(() => {
-          setStep(4);
-          setResult({
-            ...MOCK_RESULT,
-            image: record.blob,
-          });
-        }, 4500)
-      ];
+    async function analyze() {
+      try {
+        const record = await getLatestPhoto();
+        if (!active) return;
+        if (!record || !record.blob) {
+          router.push("/screen");
+          return;
+        }
 
-      return () => timers.forEach(clearTimeout);
-    });
+        setPhoto(record);
+        setPhotoUrl(URL.createObjectURL(record.blob));
+        setStep(1);
+        const prediction = await predictImage(record.analysisBlob || record.blob);
+        if (!active) return;
+        setStep(3);
+        setResult(prediction);
+        setStep(4);
+      } catch (analysisError) {
+        console.error("AnaeScan analysis failed", analysisError);
+        if (active) setError("Analysis couldn't be completed. Please try again.");
+      }
+    }
+
+    analyze();
     
     return () => {
       active = false;
@@ -60,13 +52,30 @@ export default function ResultPage() {
     };
   }, [router]);
 
+  if (error) {
+    return (
+      <MainLayout>
+        <div className="flex min-h-[60vh] flex-col items-center justify-center gap-6">
+          <div className="flex w-full flex-col items-center gap-3 rounded-[var(--radius-xl)] border border-[var(--color-error)]/20 bg-[var(--color-error-light)] p-6 text-center">
+            <FiAlertCircle className="h-10 w-10 text-[var(--color-error)]" aria-hidden="true" />
+            <h1 className="heading-2 text-[var(--color-error)]">Analysis couldn't be completed.</h1>
+            <p className="text-body-sm text-[var(--color-error)]">Please try again.</p>
+            <button type="button" onClick={() => router.push("/screen")} className="btn-primary mt-2 w-full max-w-xs">
+              Try again
+            </button>
+          </div>
+        </div>
+      </MainLayout>
+    );
+  }
+
   if (step < 4 || !result) {
     return (
       <MainLayout>
         <div className="flex flex-col items-center justify-center min-h-[60vh] gap-8">
           <div className="text-center">
-            <h1 className="heading-1">Analyzing your image</h1>
-            <p className="mt-2 text-body">Anaescan is processing your photo to estimate haemoglobin.</p>
+            <h1 className="heading-1">Preparing AnaeScan</h1>
+            <p className="mt-2 text-body">Loading the screening model and analyzing your photo.</p>
           </div>
           
           <div className="relative flex items-center justify-center h-32 w-32">
@@ -80,7 +89,7 @@ export default function ResultPage() {
           <div className="flex flex-col w-full max-w-xs gap-3">
             <ProgressStep active={step >= 0} current={step === 0} label="Photo received" />
             <ProgressStep active={step >= 1} current={step === 1} label="Image processing" />
-            <ProgressStep active={step >= 2} current={step === 2} label="Estimating haemoglobin" />
+            <ProgressStep active={step >= 2} current={step === 2} label="Running model inference" />
             <ProgressStep active={step >= 3} current={step === 3} label="Preparing result" />
           </div>
         </div>
@@ -88,8 +97,6 @@ export default function ResultPage() {
     );
   }
 
-  const isLowConfidence = result.confidence === "low";
-  
   return (
     <MainLayout>
       <div className="flex flex-col gap-6 pb-6">
@@ -98,28 +105,20 @@ export default function ResultPage() {
           <p className="mt-1 text-body-sm">Based on the image you provided</p>
         </div>
 
-        {isLowConfidence ? (
-          <Card className="flex flex-col items-center justify-center gap-3 p-6 text-center border-[var(--color-error)] bg-[var(--color-error-light)]">
-            <FiAlertCircle className="h-10 w-10 text-[var(--color-error)]" aria-hidden="true" />
-            <h2 className="heading-3 text-[var(--color-error)]">Result needs confirmation</h2>
-            <p className="text-body-sm text-[var(--color-error)] opacity-90">
-              We couldn't get a reliable screening estimate from this image.
-            </p>
-          </Card>
-        ) : (
-          <Card className="flex flex-col items-center justify-center p-8 gap-2 bg-gradient-to-br from-white to-[var(--color-bg)] border-[var(--color-border)] shadow-[var(--shadow-md)]">
-            <span className="text-eyebrow">ESTIMATED HAEMOGLOBIN</span>
-            <div className="flex items-baseline gap-2">
-              <span className="text-[4rem] font-extrabold tracking-tighter text-[var(--color-text-primary)] leading-none">{result.hemoglobin}</span>
-              <span className="text-xl font-medium text-[var(--color-text-secondary)]">{result.unit}</span>
+        <Card className="flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-white to-[var(--color-bg)] p-8 shadow-[var(--shadow-md)]">
+          <span className="text-eyebrow">RAW MODEL OUTPUT</span>
+          {result.outputs.map((output, index) => (
+            <div key={index} className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[var(--color-text-primary)]">
+                <FiCheckCircle className="h-4 w-4 text-[var(--color-success)]" aria-hidden="true" />
+                Output {index + 1}
+              </div>
+              <p className="break-words font-mono text-sm text-[var(--color-text-secondary)]">{JSON.stringify(output.values)}</p>
+              <p className="mt-2 text-xs text-[var(--color-text-muted)]">Shape: [{output.shape.join(", ")}] · Type: {output.dtype}</p>
             </div>
-            
-            <div className="mt-4 flex w-full flex-col gap-2">
-              <StatusCard status={result.status} message={result.message} />
-              <ConfidenceCard confidence={result.confidence} />
-            </div>
-          </Card>
-        )}
+          ))}
+          <p className="text-center text-body-sm">The model output has not been clinically interpreted.</p>
+        </Card>
 
         <div className="flex w-full flex-col gap-3 mt-4">
           <button type="button" onClick={() => router.push("/")} className="btn-primary w-full shadow-[var(--shadow-md)]">
@@ -164,39 +163,3 @@ function ProgressStep({ active, current, label }) {
   );
 }
 
-function StatusCard({ status, message }) {
-  const isWarning = status === "possible_low_hb";
-  return (
-    <div className={`flex flex-col gap-1 p-3 rounded-[var(--radius-md)] ${isWarning ? 'bg-[var(--color-warning-light)]' : 'bg-[var(--color-success-light)]'}`}>
-      <div className="flex items-center gap-2">
-        {isWarning ? <FiAlertTriangle className="h-4 w-4 text-[var(--color-warning)]" /> : <FiCheckCircle className="h-4 w-4 text-[var(--color-success)]" />}
-        <span className={`text-sm font-bold ${isWarning ? 'text-[var(--color-warning)]' : 'text-[var(--color-success)]'}`}>
-          {isWarning ? "Possible low-Hb signal" : "Normal signal"}
-        </span>
-      </div>
-      <span className={`text-xs ${isWarning ? 'text-[var(--color-warning)]' : 'text-[var(--color-success)]'} opacity-90`}>{message}</span>
-    </div>
-  );
-}
-
-function ConfidenceCard({ confidence }) {
-  const isHigh = confidence === "high";
-  const isMod = confidence === "moderate";
-  
-  const title = isHigh ? "High confidence" : isMod ? "Moderate confidence" : "Low confidence";
-  const desc = isHigh 
-    ? "The image provided a very clear signal for estimation." 
-    : isMod 
-    ? "The image provided a usable visual signal, but confirmation may still be appropriate." 
-    : "We couldn't get a reliable screening estimate from this image.";
-    
-  return (
-    <div className="flex flex-col gap-1 p-3 rounded-[var(--radius-md)] bg-[var(--color-bg)] border border-[var(--color-border)]">
-      <div className="flex items-center gap-2">
-        <FiCheckCircle className={`h-4 w-4 ${isHigh ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`} />
-        <span className="text-sm font-bold text-[var(--color-text-primary)]">{title}</span>
-      </div>
-      <span className="text-xs text-[var(--color-text-secondary)]">{desc}</span>
-    </div>
-  );
-}
