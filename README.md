@@ -8,14 +8,14 @@ The original trained model is `models/conjuctiva.keras` and is tracked with Git 
 git lfs pull
 ```
 
-The browser uses TensorFlow.js and expects the converted files at `public/models/conjuctiva/model.json`. Install the conversion tools in a Python 3.11 environment, then run:
+The browser uses TensorFlow.js TFLite support and expects the converted model at `public/models/conjuctiva.tflite`. Install TensorFlow in a Python environment, then run:
 
 ```powershell
-pip install tensorflow-cpu tensorflowjs
+pip install tensorflow
 .\scripts\convert-model.ps1
 ```
 
-The Keras model declares an input shape of `224x224x3` float32 and has no embedded normalization layer. Its output is a single sigmoid value. The app therefore keeps preprocessing isolated and displays the raw model output until the training preprocessing and output meaning are confirmed by the ML team.
+The Keras model declares an input shape of `224x224x3` float32 and has no embedded normalization layer. Its output is a single sigmoid value. The app therefore keeps preprocessing isolated and displays the raw model output until the training preprocessing and output meaning are confirmed by the ML team. The original `models/conjuctiva.keras` remains unchanged.
 
 ## Getting Started
 

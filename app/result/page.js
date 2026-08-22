@@ -4,9 +4,14 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import MainLayout from "@/components/MainLayout";
 import Card from "@/components/Card";
-import { getLatestPhoto } from "@/lib/db";
+import { getLatestPhoto, getPhoto, getScreening, saveScreening, updatePhoto } from "@/lib/db";
 import { predictImage } from "@/lib/model";
-import { FiAlertCircle, FiCheckCircle, FiInfo } from "react-icons/fi";
+import {
+  FiAlertCircle,
+  FiAlertTriangle,
+  FiCheckCircle,
+  FiInfo,
+} from "react-icons/fi";
 
 export default function ResultPage() {
   const router = useRouter();
@@ -20,19 +25,52 @@ export default function ResultPage() {
     let active = true;
     async function analyze() {
       try {
-        const record = await getLatestPhoto();
+        const requestedScreeningId = new URLSearchParams(window.location.search).get("screening");
+        const savedScreening = requestedScreeningId
+          ? await getScreening(requestedScreeningId)
+          : null;
+        const record = savedScreening?.imageId
+          ? await getPhoto(savedScreening.imageId)
+          : await getLatestPhoto();
         if (!active) return;
-        if (!record || !record.blob) {
+        if ((!record || !record.blob) && !savedScreening?.prediction) {
           router.push("/screen");
           return;
         }
 
-        setPhoto(record);
-        setPhotoUrl(URL.createObjectURL(record.blob));
+        if (record?.blob) {
+          setPhoto(record);
+          setPhotoUrl(URL.createObjectURL(record.blob));
+        }
+        if (savedScreening?.prediction) {
+          setResult(savedScreening.prediction);
+          setStep(4);
+          return;
+        }
+
         setStep(1);
         const prediction = await predictImage(record.analysisBlob || record.blob);
         if (!active) return;
         setStep(3);
+        const score = prediction.outputs?.[0]?.values?.[0];
+        await saveScreening({
+          id: record.screeningId || record.id,
+          imageId: record.id,
+          prediction,
+          score,
+          interpretation:
+            typeof score === "number"
+              ? score > 0.5
+                ? "You may be anaemic"
+                : score < 0.5
+                  ? "You have a low chance of anaemia"
+                  : "Result is on the decision boundary"
+              : undefined,
+        });
+        await updatePhoto(record.id, {
+          screeningId: record.screeningId || record.id,
+          status: "analyzed",
+        });
         setResult(prediction);
         setStep(4);
       } catch (analysisError) {
@@ -97,6 +135,11 @@ export default function ResultPage() {
     );
   }
 
+  const modelScore = result.outputs?.[0]?.values?.[0];
+  const hasModelScore = typeof modelScore === "number" && Number.isFinite(modelScore);
+  const isAnemiaSignal = hasModelScore && modelScore > 0.5;
+  const isNormalSignal = hasModelScore && modelScore < 0.5;
+
   return (
     <MainLayout>
       <div className="flex flex-col gap-6 pb-6">
@@ -106,6 +149,43 @@ export default function ResultPage() {
         </div>
 
         <Card className="flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-white to-[var(--color-bg)] p-8 shadow-[var(--shadow-md)]">
+          {hasModelScore && (
+            <div
+              className={`flex w-full items-start gap-3 rounded-[var(--radius-lg)] p-4 ${
+                isAnemiaSignal
+                  ? "bg-[var(--color-warning-light)] text-[var(--color-warning)]"
+                  : isNormalSignal
+                    ? "bg-[var(--color-success-light)] text-[var(--color-success)]"
+                    : "bg-[var(--color-bg)] text-[var(--color-text-secondary)]"
+              }`}
+              role="status"
+              aria-live="polite"
+            >
+              {isAnemiaSignal ? (
+                <FiAlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+              ) : isNormalSignal ? (
+                <FiCheckCircle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+              ) : (
+                <FiInfo className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+              )}
+              <div>
+                <p className="font-semibold">
+                  {isAnemiaSignal
+                    ? "You may be anaemic"
+                    : isNormalSignal
+                      ? "You have a low chance of anaemia"
+                      : "Result is on the decision boundary"}
+                </p>
+                <p className="mt-1 text-sm opacity-90">
+                  {isAnemiaSignal
+                    ? "The model output is above the 0.5 threshold. Please confirm with a healthcare professional."
+                    : isNormalSignal
+                      ? "The model output is below the 0.5 threshold."
+                      : "The model output is exactly 0.5 and cannot be classified by this rule."}
+                </p>
+              </div>
+            </div>
+          )}
           <span className="text-eyebrow">RAW MODEL OUTPUT</span>
           {result.outputs.map((output, index) => (
             <div key={index} className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] p-4">

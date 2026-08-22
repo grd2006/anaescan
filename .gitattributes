@@ -1,1 +1,2 @@
 models/conjuctiva.keras filter=lfs diff=lfs merge=lfs -text
+public/models/conjuctiva.tflite filter=lfs diff=lfs merge=lfs -text
